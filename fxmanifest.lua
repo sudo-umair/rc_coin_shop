@@ -22,6 +22,15 @@ server_scripts {
     'server/main.lua'
 }
 
+ui_page 'html/index.html'
+
+files {
+    'html/index.html',
+    'html/style.css',
+    'html/script.js',
+    'html/logo.png'
+}
+
 dependencies {
     'es_extended',
     'ox_lib',

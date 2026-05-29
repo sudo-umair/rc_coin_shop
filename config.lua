@@ -4,10 +4,10 @@ Config = {}
 --  GENERAL
 -- ============================================================
 
--- Name shown next to amounts in menus/notifications (e.g. "150 Coins")
+-- Name shown next to amounts in the UI (e.g. "150 Coins")
 Config.CurrencyName = 'Coins'
 
--- Title shown at the top of the shop menu
+-- Title shown at the top of the shop UI
 Config.ShopTitle = 'Coin Shop'
 
 -- Default key to open the shop. Players can rebind this in
@@ -17,10 +17,22 @@ Config.ShopTitle = 'Coin Shop'
 Config.OpenKey = 'F5'
 
 -- ============================================================
+--  BRANDING / THEME  (matches mGarage + ac_scoreboard)
+-- ============================================================
+Config.Branding = {
+    serverName = 'Royal RP',     -- shown in the UI header
+    logo = 'logo.png',           -- file inside html/ ; used as header mark + bg watermark
+    showBackgroundLogo = true,   -- faint watermark behind the panel
+    accent = '#CCAA00',          -- primary gold accent
+    accentHover = '#e0be00',     -- brighter gold for hover/active
+}
+
+-- ============================================================
 --  ADMIN
 -- ============================================================
 
--- ACE permission required to run /addcoins /removecoins /setcoins /checkcoins.
+-- ACE permission required for: the in-UI Admin tab, item management,
+-- and the /addcoins /removecoins /setcoins /checkcoins commands.
 -- Grant it in server.cfg, e.g:
 --   add_ace group.admin coin_shop.admin allow
 --   add_principal identifier.fivem:1234567 group.admin
@@ -36,25 +48,10 @@ Config.MaxPurchaseQuantity = 100
 -- ============================================================
 --  ITEM CATALOG
 -- ============================================================
--- Each entry:
---   name     = ox_inventory item name (must exist in ox_inventory's items)
---   price    = coins per single unit
---   category = optional grouping label shown as a sub-menu
---   label    = optional override; if nil the ox_inventory label is used
---
--- Labels and images are pulled automatically from ox_inventory.
-Config.Items = {
-    { name = 'bread',       price = 25,   category = 'Food & Drink' },
-    { name = 'water',       price = 20,   category = 'Food & Drink' },
-    { name = 'burger',      price = 50,   category = 'Food & Drink' },
-
-    { name = 'lockpick',    price = 150,  category = 'Tools' },
-    { name = 'phone',       price = 500,  category = 'Tools' },
-    { name = 'radio',       price = 350,  category = 'Tools' },
-
-    { name = 'bandage',     price = 100,  category = 'Medical' },
-    { name = 'medikit',     price = 750,  category = 'Medical' },
-}
+-- The catalog is stored in the `coin_shop_items` table and managed
+-- entirely from the in-game Admin tab (add / update / remove items).
+-- It starts empty; add items via the UI. Labels and images are pulled
+-- from ox_inventory unless overridden per item.
 
 -- ============================================================
 --  LOGGING
@@ -72,6 +69,6 @@ Config.Logging = {
         webhook = '',                 -- paste your webhook URL here
         botName = 'Coin Shop',
         avatar  = '',                 -- optional avatar image URL
-        color   = 3066993,            -- decimal embed colour (green)
+        color   = 13413120,           -- decimal embed colour (#CCAA00 gold)
     },
 }

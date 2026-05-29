@@ -3,6 +3,9 @@ local ESX = exports['es_extended']:getSharedObject()
 -- account_id -> coins (in-memory cache for online players)
 local balances = {}
 
+-- catalog cache: id -> row, plus an ordered list
+local items = {}
+
 -- ============================================================
 --  HELPERS
 -- ============================================================
@@ -20,10 +23,92 @@ local function getAccountIdFromSource(src)
     return getAccountId(xPlayer.identifier)
 end
 
--- Build a fast lookup of valid catalog items: name -> { price, label }
-local catalog = {}
-for _, entry in ipairs(Config.Items) do
-    catalog[entry.name] = entry
+local function isAdmin(src)
+    if src == 0 then return true end -- server console / txAdmin
+    return IsPlayerAceAllowed(src, Config.AcePermission)
+end
+
+-- ox_inventory item registry (label + image fallbacks)
+local function oxItems()
+    return exports.ox_inventory:Items()
+end
+
+local function resolveLabel(row)
+    if row.label and row.label ~= '' then return row.label end
+    local ox = oxItems()[row.name]
+    return ox and ox.label or row.name
+end
+
+local function resolveImage(row)
+    if row.image and row.image ~= '' then return row.image end
+    return ('nui://ox_inventory/web/images/%s.png'):format(row.name)
+end
+
+-- Display shape sent to the NUI.
+local function toDisplay(row)
+    return {
+        id = row.id,
+        name = row.name,
+        label = resolveLabel(row),
+        price = row.price,
+        category = (row.category and row.category ~= '') and row.category or 'General',
+        description = row.description or '',
+        image = resolveImage(row),
+        enabled = row.enabled == 1 or row.enabled == true,
+        sort_order = row.sort_order,
+        -- raw override values, used to prefill the admin edit form
+        rawLabel = row.label or '',
+        rawImage = row.image or '',
+        rawCategory = row.category or '',
+    }
+end
+
+-- All online server ids belonging to one account (multichar aware).
+local function sourcesForAccount(accountId)
+    local list = {}
+    for _, playerId in ipairs(GetPlayers()) do
+        local xPlayer = ESX.GetPlayerFromId(tonumber(playerId))
+        if xPlayer and getAccountId(xPlayer.identifier) == accountId then
+            list[#list + 1] = tonumber(playerId)
+        end
+    end
+    return list
+end
+
+local function toast(src, kind, message)
+    if src and src ~= 0 then
+        TriggerClientEvent('rc_coin_shop:toast', src, kind, message)
+    else
+        print(('[rc_coin_shop] %s'):format(message))
+    end
+end
+
+-- ============================================================
+--  CATALOG
+-- ============================================================
+
+local function loadCatalog()
+    local rows = MySQL.query.await('SELECT * FROM coin_shop_items ORDER BY sort_order ASC, id ASC') or {}
+    items = {}
+    for _, row in ipairs(rows) do
+        items[row.id] = row
+    end
+    print(('[rc_coin_shop] Loaded %d catalog item(s).'):format(#rows))
+end
+
+-- Ordered display list. `onlyEnabled` for the player shop.
+local function catalogList(onlyEnabled)
+    local list = {}
+    for _, row in pairs(items) do
+        if not onlyEnabled or (row.enabled == 1 or row.enabled == true) then
+            list[#list + 1] = toDisplay(row)
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.sort_order ~= b.sort_order then return a.sort_order < b.sort_order end
+        return a.id < b.id
+    end)
+    return list
 end
 
 -- ============================================================
@@ -41,7 +126,7 @@ local function logDiscord(title, description)
             title = title,
             description = description,
             color = d.color,
-            footer = { text = ('coin_shop • %s'):format(os.date('%Y-%m-%d %H:%M:%S')) },
+            footer = { text = ('rc_coin_shop • %s'):format(os.date('%Y-%m-%d %H:%M:%S')) },
         } },
     }), { ['Content-Type'] = 'application/json' })
 end
@@ -49,7 +134,7 @@ end
 -- type: purchase | admin_add | admin_remove | admin_set
 local function logTransaction(data)
     if Config.Logging.console then
-        print(('[coin_shop] %s | account=%s amount=%s balance=%s%s actor=%s'):format(
+        print(('[rc_coin_shop] %s | account=%s amount=%s balance=%s%s actor=%s'):format(
             data.type,
             data.account_id,
             data.amount,
@@ -81,8 +166,6 @@ end
 --  BALANCE CORE
 -- ============================================================
 
--- Load a balance from the cache, falling back to the DB (and creating the
--- row if missing). Returns the integer balance.
 local function loadBalance(accountId)
     if not accountId then return 0 end
     if balances[accountId] ~= nil then return balances[accountId] end
@@ -97,21 +180,17 @@ local function loadBalance(accountId)
     return balances[accountId]
 end
 
--- Persist a balance to the DB and update the cache.
 local function persistBalance(accountId, coins)
     balances[accountId] = coins
     MySQL.prepare.await([[
         INSERT INTO coin_shop_balance (account_id, coins) VALUES (?, ?)
         ON DUPLICATE KEY UPDATE coins = VALUES(coins)
     ]], { accountId, coins })
-end
 
--- ============================================================
---  PUBLIC API (also exported)
--- ============================================================
-
-local function GetCoins(accountId)
-    return loadBalance(accountId)
+    -- Refresh any open UI for this account's online characters.
+    for _, src in ipairs(sourcesForAccount(accountId)) do
+        TriggerClientEvent('rc_coin_shop:balanceUpdate', src, coins)
+    end
 end
 
 -- Returns the new balance, or nil + reason on failure.
@@ -157,7 +236,7 @@ local function SetCoins(accountId, amount, meta)
     return amount
 end
 
-exports('GetCoins', GetCoins)
+exports('GetCoins', function(accountId) return loadBalance(accountId) end)
 exports('AddCoins', function(accountId, amount, actor)
     return ModifyCoins(accountId, math.abs(amount), { type = 'admin_add', actor = actor })
 end)
@@ -173,17 +252,13 @@ end)
 -- ============================================================
 
 RegisterNetEvent('esx:playerLoaded', function(playerId, xPlayer)
-    local accountId = getAccountId(xPlayer.identifier)
-    loadBalance(accountId)
+    loadBalance(getAccountId(xPlayer.identifier))
 end)
 
--- We write through on every change, so dropping just frees memory.
 AddEventHandler('playerDropped', function()
     local src = source
     local accountId = getAccountIdFromSource(src)
     if not accountId then return end
-
-    -- Only evict if no other online character shares this account.
     for _, playerId in ipairs(GetPlayers()) do
         if tonumber(playerId) ~= src then
             local other = ESX.GetPlayerFromId(tonumber(playerId))
@@ -195,38 +270,52 @@ AddEventHandler('playerDropped', function()
     balances[accountId] = nil
 end)
 
+CreateThread(function()
+    Wait(500)
+    loadCatalog()
+end)
+
 -- ============================================================
---  CLIENT CALLBACKS
+--  PLAYER CALLBACKS
 -- ============================================================
 
--- Sends the player's balance + catalog so the client can build the menu.
-lib.callback.register('coin_shop:getData', function(source)
+lib.callback.register('rc_coin_shop:getShop', function(source)
     local accountId = getAccountIdFromSource(source)
     if not accountId then
-        print(('[rc_coin_shop] getData: no ESX player for source %s (is ESX loaded / player spawned?)'):format(source))
+        print(('[rc_coin_shop] getShop: no ESX player for source %s'):format(source))
         return false
     end
 
     local ok, balance = pcall(loadBalance, accountId)
     if not ok then
-        print(('[rc_coin_shop] getData: DB error for account %s -> %s'):format(accountId, balance))
-        print('[rc_coin_shop] Did you import sql/coin_shop.sql? The coin_shop_balance table is required.')
+        print(('[rc_coin_shop] getShop: DB error for account %s -> %s'):format(accountId, balance))
+        print('[rc_coin_shop] Did you import sql/coin_shop.sql?')
         return false
     end
 
     return {
         balance = balance,
         currency = Config.CurrencyName,
-        items = Config.Items,
+        title = Config.ShopTitle,
+        maxQuantity = Config.MaxPurchaseQuantity,
+        isAdmin = isAdmin(source),
+        items = catalogList(true),
+        branding = Config.Branding,
     }
 end)
 
--- Handles a purchase. Returns { success = bool, message = string, balance = int }
-lib.callback.register('coin_shop:purchase', function(source, itemName, quantity)
+lib.callback.register('rc_coin_shop:purchase', function(source, itemName, quantity)
     local xPlayer = ESX.GetPlayerFromId(source)
     if not xPlayer then return { success = false, message = 'Player not found.' } end
 
-    local entry = catalog[itemName]
+    -- Find the catalog row by name (enabled only).
+    local entry
+    for _, row in pairs(items) do
+        if row.name == itemName and (row.enabled == 1 or row.enabled == true) then
+            entry = row
+            break
+        end
+    end
     if not entry then
         return { success = false, message = 'That item is not for sale.' }
     end
@@ -248,7 +337,6 @@ lib.callback.register('coin_shop:purchase', function(source, itemName, quantity)
             Config.CurrencyName, total, balance), balance = balance }
     end
 
-    -- Make sure the player can actually carry it before charging.
     if not exports.ox_inventory:CanCarryItem(source, itemName, quantity) then
         return { success = false, message = 'You can\'t carry that many.', balance = balance }
     end
@@ -268,30 +356,112 @@ lib.callback.register('coin_shop:purchase', function(source, itemName, quantity)
 
     return {
         success = true,
-        message = ('Purchased %dx %s for %d %s.'):format(quantity, itemName, total, Config.CurrencyName),
+        message = ('Purchased %dx %s for %d %s.'):format(quantity, resolveLabel(entry), total, Config.CurrencyName),
         balance = newBalance,
     }
 end)
 
 -- ============================================================
---  ADMIN COMMANDS (ACE gated)
+--  ADMIN CALLBACKS (ACE gated, server-enforced)
 -- ============================================================
 
-local function isAllowed(src)
-    if src == 0 then return true end -- server console / txAdmin
-    return IsPlayerAceAllowed(src, Config.AcePermission)
-end
+-- Full catalog (incl. disabled) + the ox_inventory item list for the picker.
+lib.callback.register('rc_coin_shop:admin:getItems', function(source)
+    if not isAdmin(source) then return false end
 
-local function notifyAdmin(src, msg, kind)
-    if src == 0 then
-        print(('[coin_shop] %s'):format(msg))
-    else
-        TriggerClientEvent('ox_lib:notify', src, { title = 'Coin Shop', description = msg, type = kind or 'inform' })
+    local oxList = {}
+    for name, data in pairs(oxItems()) do
+        oxList[#oxList + 1] = { name = name, label = data.label or name }
     end
-end
+    table.sort(oxList, function(a, b) return a.name < b.name end)
+
+    return { items = catalogList(false), oxItems = oxList }
+end)
+
+-- Create or update an item. data = { id?, name, label, price, category, description, image, enabled, sort_order }
+lib.callback.register('rc_coin_shop:admin:saveItem', function(source, data)
+    if not isAdmin(source) then return { success = false, message = 'No permission.' } end
+    if type(data) ~= 'table' then return { success = false, message = 'Invalid data.' } end
+
+    local name = tostring(data.name or ''):gsub('%s', '')
+    local price = tonumber(data.price)
+    if name == '' then return { success = false, message = 'Item name is required.' } end
+    if not price or price < 0 then return { success = false, message = 'Price must be 0 or greater.' } end
+    if not oxItems()[name] then
+        return { success = false, message = ('"%s" is not a registered ox_inventory item.'):format(name) }
+    end
+
+    local label = (data.label and data.label ~= '') and data.label or nil
+    local category = (data.category and data.category ~= '') and data.category or nil
+    local description = (data.description and data.description ~= '') and data.description or nil
+    local image = (data.image and data.image ~= '') and data.image or nil
+    local enabled = (data.enabled == false) and 0 or 1
+    local sortOrder = tonumber(data.sort_order) or 0
+
+    if data.id then
+        MySQL.update.await([[
+            UPDATE coin_shop_items
+            SET name=?, label=?, price=?, category=?, description=?, image=?, enabled=?, sort_order=?
+            WHERE id=?
+        ]], { name, label, math.floor(price), category, description, image, enabled, sortOrder, data.id })
+    else
+        -- Reject duplicate item name.
+        local exists = MySQL.scalar.await('SELECT id FROM coin_shop_items WHERE name = ?', { name })
+        if exists then
+            return { success = false, message = ('"%s" is already in the catalog.'):format(name) }
+        end
+        MySQL.insert.await([[
+            INSERT INTO coin_shop_items (name, label, price, category, description, image, enabled, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ]], { name, label, math.floor(price), category, description, image, enabled, sortOrder })
+    end
+
+    loadCatalog()
+    return { success = true, message = 'Item saved.', items = catalogList(false) }
+end)
+
+lib.callback.register('rc_coin_shop:admin:deleteItem', function(source, id)
+    if not isAdmin(source) then return { success = false, message = 'No permission.' } end
+    id = tonumber(id)
+    if not id then return { success = false, message = 'Invalid item.' } end
+
+    MySQL.update.await('DELETE FROM coin_shop_items WHERE id = ?', { id })
+    loadCatalog()
+    return { success = true, message = 'Item removed.', items = catalogList(false) }
+end)
+
+-- Online players (for the coin manager), with balances. Optional name/id filter.
+lib.callback.register('rc_coin_shop:admin:getPlayers', function(source, search)
+    if not isAdmin(source) then return false end
+    search = search and tostring(search):lower() or ''
+
+    local list = {}
+    for _, playerId in ipairs(GetPlayers()) do
+        local sid = tonumber(playerId)
+        local xPlayer = ESX.GetPlayerFromId(sid)
+        if xPlayer then
+            local name = GetPlayerName(sid) or ('Player %s'):format(sid)
+            if search == '' or tostring(sid) == search or name:lower():find(search, 1, true) then
+                local accountId = getAccountId(xPlayer.identifier)
+                list[#list + 1] = {
+                    id = sid,
+                    name = name,
+                    character = xPlayer.getName and xPlayer.getName() or nil,
+                    identifier = xPlayer.identifier,
+                    balance = loadBalance(accountId),
+                }
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a.id < b.id end)
+    return list
+end)
+
+-- ============================================================
+--  UNIFIED COIN MODIFICATION (shared by UI + commands)
+-- ============================================================
 
 -- Resolve a target argument: a server id (online) or a raw identifier/account id.
--- Returns accountId, displayName.
 local function resolveTarget(arg)
     local asId = tonumber(arg)
     if asId then
@@ -301,71 +471,72 @@ local function resolveTarget(arg)
         end
         return nil, nil
     end
-    -- Treat as identifier; strip char prefix if present.
-    return getAccountId(arg), arg
+    if type(arg) == 'string' and arg ~= '' then
+        return getAccountId(arg), arg
+    end
+    return nil, nil
 end
+
+-- mode = 'add' | 'remove' | 'set'. Returns ok(bool), message(string), newBalance(int|nil)
+local function doModify(actorName, target, mode, amount)
+    local accountId, name = resolveTarget(target)
+    amount = tonumber(amount)
+    if not accountId then return false, 'Target not found.' end
+    if not amount or amount < 0 or amount % 1 ~= 0 then return false, 'Amount must be a whole number ≥ 0.' end
+    amount = math.floor(amount)
+
+    local newBalance
+    if mode == 'add' then
+        newBalance = ModifyCoins(accountId, amount, { type = 'admin_add', actor = actorName })
+    elseif mode == 'remove' then
+        newBalance = ModifyCoins(accountId, -amount, { type = 'admin_remove', actor = actorName })
+        if not newBalance then -- clamp to zero rather than refusing
+            newBalance = SetCoins(accountId, 0, { type = 'admin_remove', actor = actorName })
+        end
+    elseif mode == 'set' then
+        newBalance = SetCoins(accountId, amount, { actor = actorName })
+    else
+        return false, 'Invalid mode.'
+    end
+
+    if not newBalance then return false, 'Failed to modify coins.' end
+    return true, ('%s now has %d %s.'):format(name or accountId, newBalance, Config.CurrencyName), newBalance
+end
+
+-- UI entry point.
+lib.callback.register('rc_coin_shop:admin:modifyCoins', function(source, payload)
+    if not isAdmin(source) then return { success = false, message = 'No permission.' } end
+    if type(payload) ~= 'table' then return { success = false, message = 'Invalid data.' } end
+
+    local actorName = source == 0 and 'console' or ('%s (%s)'):format(GetPlayerName(source), source)
+    local ok, message = doModify(actorName, payload.target, payload.mode, payload.amount)
+    return { success = ok, message = message }
+end)
+
+-- ============================================================
+--  ADMIN COMMANDS (ACE gated)
+-- ============================================================
 
 local function adminName(src)
     return src == 0 and 'console' or ('%s (%s)'):format(GetPlayerName(src), src)
 end
 
-RegisterCommand('addcoins', function(src, args)
-    if not isAllowed(src) then return notifyAdmin(src, 'No permission.', 'error') end
-    local accountId, name = resolveTarget(args[1])
-    local amount = tonumber(args[2])
-    if not accountId or not amount or amount <= 0 then
-        return notifyAdmin(src, 'Usage: /addcoins [id|identifier] [amount]', 'error')
+local function coinCommand(mode, usage)
+    return function(src, args)
+        if not isAdmin(src) then return toast(src, 'error', 'No permission.') end
+        if not args[1] or not args[2] then return toast(src, 'error', usage) end
+        local ok, message = doModify(adminName(src), args[1], mode, args[2])
+        toast(src, ok and 'success' or 'error', message)
     end
+end
 
-    local newBalance = ModifyCoins(accountId, math.floor(amount), {
-        type = 'admin_add', actor = adminName(src),
-    })
-    notifyAdmin(src, ('Added %d %s to %s. New balance: %d.'):format(
-        math.floor(amount), Config.CurrencyName, name or accountId, newBalance), 'success')
-end, false)
-
-RegisterCommand('removecoins', function(src, args)
-    if not isAllowed(src) then return notifyAdmin(src, 'No permission.', 'error') end
-    local accountId, name = resolveTarget(args[1])
-    local amount = tonumber(args[2])
-    if not accountId or not amount or amount <= 0 then
-        return notifyAdmin(src, 'Usage: /removecoins [id|identifier] [amount]', 'error')
-    end
-
-    local newBalance, reason = ModifyCoins(accountId, -math.floor(amount), {
-        type = 'admin_remove', actor = adminName(src),
-    })
-    if not newBalance then
-        if reason == 'insufficient' then
-            -- Clamp to zero rather than refusing.
-            newBalance = SetCoins(accountId, 0, { type = 'admin_remove', actor = adminName(src) })
-        else
-            return notifyAdmin(src, 'Failed to remove coins.', 'error')
-        end
-    end
-    notifyAdmin(src, ('Removed %d %s from %s. New balance: %d.'):format(
-        math.floor(amount), Config.CurrencyName, name or accountId, newBalance), 'success')
-end, false)
-
-RegisterCommand('setcoins', function(src, args)
-    if not isAllowed(src) then return notifyAdmin(src, 'No permission.', 'error') end
-    local accountId, name = resolveTarget(args[1])
-    local amount = tonumber(args[2])
-    if not accountId or not amount or amount < 0 then
-        return notifyAdmin(src, 'Usage: /setcoins [id|identifier] [amount]', 'error')
-    end
-
-    local newBalance = SetCoins(accountId, math.floor(amount), { actor = adminName(src) })
-    notifyAdmin(src, ('Set %s balance to %d %s.'):format(
-        name or accountId, newBalance, Config.CurrencyName), 'success')
-end, false)
+RegisterCommand('addcoins', coinCommand('add', 'Usage: /addcoins [id|identifier] [amount]'), false)
+RegisterCommand('removecoins', coinCommand('remove', 'Usage: /removecoins [id|identifier] [amount]'), false)
+RegisterCommand('setcoins', coinCommand('set', 'Usage: /setcoins [id|identifier] [amount]'), false)
 
 RegisterCommand('checkcoins', function(src, args)
-    if not isAllowed(src) then return notifyAdmin(src, 'No permission.', 'error') end
+    if not isAdmin(src) then return toast(src, 'error', 'No permission.') end
     local accountId, name = resolveTarget(args[1])
-    if not accountId then
-        return notifyAdmin(src, 'Usage: /checkcoins [id|identifier]', 'error')
-    end
-    notifyAdmin(src, ('%s has %d %s.'):format(
-        name or accountId, loadBalance(accountId), Config.CurrencyName), 'inform')
+    if not accountId then return toast(src, 'error', 'Usage: /checkcoins [id|identifier]') end
+    toast(src, 'inform', ('%s has %d %s.'):format(name or accountId, loadBalance(accountId), Config.CurrencyName))
 end, false)

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+    <title>Coin Shop</title>
+</head>
+<body>
+    <div id="app" class="hidden">
+        <div class="backdrop" data-close></div>
+
+        <div class="panel">
+            <!-- Header -->
+            <header class="panel-header">
+                <div class="brand">
+                    <img class="brand-logo" id="brandLogo" src="logo.png" alt="" />
+                    <div class="brand-text">
+                        <span class="brand-server" id="brandServer">Royal RP</span>
+                        <span class="brand-title" id="brandTitle">Coin Shop</span>
+                    </div>
+                </div>
+
+                <nav class="tabs" id="tabs">
+                    <button class="tab active" data-tab="shop">Shop</button>
+                    <button class="tab hidden" data-tab="admin" id="adminTabBtn">Admin</button>
+                </nav>
+
+                <div class="header-right">
+                    <div class="balance">
+                        <img class="balance-coin" src="logo.png" alt="" />
+                        <span id="balance">0</span>
+                        <span class="balance-label" id="currencyLabel">Coins</span>
+                    </div>
+                    <button class="close-btn" data-close aria-label="Close">&times;</button>
+                </div>
+            </header>
+
+            <!-- ============ SHOP TAB ============ -->
+            <section class="tab-panel active" id="tab-shop">
+                <div class="toolbar">
+                    <input type="text" id="shopSearch" class="input search" placeholder="Search items..." />
+                    <div class="chips" id="categoryChips"></div>
+                </div>
+                <div class="grid" id="shopGrid"></div>
+                <div class="empty hidden" id="shopEmpty">No items available right now.</div>
+            </section>
+
+            <!-- ============ ADMIN TAB ============ -->
+            <section class="tab-panel" id="tab-admin">
+                <div class="subtabs">
+                    <button class="subtab active" data-subtab="items">Manage Items</button>
+                    <button class="subtab" data-subtab="coins">Manage Coins</button>
+                </div>
+
+                <!-- Items management -->
+                <div class="subtab-panel active" id="subtab-items">
+                    <div class="admin-bar">
+                        <h3>Catalog</h3>
+                        <button class="btn primary" id="addItemBtn">+ Add Item</button>
+                    </div>
+                    <div class="admin-list" id="adminItemList"></div>
+                </div>
+
+                <!-- Coins management -->
+                <div class="subtab-panel" id="subtab-coins">
+                    <div class="coins-grid">
+                        <div class="coins-col">
+                            <h3>Online Players</h3>
+                            <input type="text" id="playerSearch" class="input" placeholder="Search by name or server id..." />
+                            <div class="admin-list" id="playerList"></div>
+                        </div>
+                        <div class="coins-col">
+                            <h3>Adjust Balance</h3>
+                            <div class="field">
+                                <label>Target</label>
+                                <input type="text" id="coinTarget" class="input" placeholder="Server id or identifier" />
+                                <small class="hint">Select a player on the left, or type an id / identifier.</small>
+                            </div>
+                            <div class="field">
+                                <label>Action</label>
+                                <div class="seg" id="coinMode">
+                                    <button class="seg-btn active" data-mode="add">Add</button>
+                                    <button class="seg-btn" data-mode="remove">Remove</button>
+                                    <button class="seg-btn" data-mode="set">Set</button>
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label>Amount</label>
+                                <input type="number" id="coinAmount" class="input" min="0" value="0" />
+                            </div>
+                            <button class="btn primary block" id="applyCoinsBtn">Apply</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Quantity purchase modal -->
+        <div class="modal hidden" id="qtyModal">
+            <div class="modal-card">
+                <div class="modal-head">
+                    <img id="qtyImage" src="" alt="" />
+                    <div>
+                        <h3 id="qtyLabel">Item</h3>
+                        <span id="qtyUnit" class="muted"></span>
+                    </div>
+                </div>
+                <div class="field">
+                    <label>Quantity</label>
+                    <div class="qty-row">
+                        <button class="qty-step" id="qtyMinus">-</button>
+                        <input type="number" id="qtyInput" class="input" min="1" value="1" />
+                        <button class="qty-step" id="qtyPlus">+</button>
+                    </div>
+                </div>
+                <div class="total-row">
+                    <span>Total</span>
+                    <strong id="qtyTotal">0</strong>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn ghost" id="qtyCancel">Cancel</button>
+                    <button class="btn primary" id="qtyConfirm">Purchase</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Item editor modal -->
+        <div class="modal hidden" id="itemModal">
+            <div class="modal-card wide">
+                <div class="modal-head">
+                    <h3 id="itemModalTitle">Add Item</h3>
+                </div>
+                <div class="form-grid">
+                    <div class="field">
+                        <label>Item (ox_inventory name)</label>
+                        <input type="text" id="fName" class="input" list="oxItemsList" placeholder="e.g. lockpick" />
+                        <datalist id="oxItemsList"></datalist>
+                    </div>
+                    <div class="field">
+                        <label>Price (coins)</label>
+                        <input type="number" id="fPrice" class="input" min="0" value="0" />
+                    </div>
+                    <div class="field">
+                        <label>Label override <span class="muted">(optional)</span></label>
+                        <input type="text" id="fLabel" class="input" placeholder="Defaults to ox_inventory label" />
+                    </div>
+                    <div class="field">
+                        <label>Category <span class="muted">(optional)</span></label>
+                        <input type="text" id="fCategory" class="input" placeholder="e.g. Tools" />
+                    </div>
+                    <div class="field full">
+                        <label>Description <span class="muted">(optional)</span></label>
+                        <input type="text" id="fDescription" class="input" placeholder="Short description shown on the card" />
+                    </div>
+                    <div class="field">
+                        <label>Image override <span class="muted">(optional)</span></label>
+                        <input type="text" id="fImage" class="input" placeholder="Defaults to ox_inventory image" />
+                    </div>
+                    <div class="field">
+                        <label>Sort order</label>
+                        <input type="number" id="fSort" class="input" value="0" />
+                    </div>
+                    <div class="field checkbox-field">
+                        <label class="checkbox">
+                            <input type="checkbox" id="fEnabled" checked />
+                            <span>Enabled (visible in shop)</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn danger ghost hidden" id="itemDelete">Delete</button>
+                    <span class="spacer"></span>
+                    <button class="btn ghost" id="itemCancel">Cancel</button>
+                    <button class="btn primary" id="itemSave">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Outside #app so server toasts show even when the shop is closed -->
+    <div class="toasts" id="toasts"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>

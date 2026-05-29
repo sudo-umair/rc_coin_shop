@@ -1,14 +1,19 @@
 # rc_coin_shop
 
-An ESX Legacy in-game shop where players buy **ox_inventory** items using **coins**, with admin commands to manage balances. Built on **ox_lib** for the UI.
+An ESX Legacy in-game shop where players buy **ox_inventory** items using **coins**, with a fully **custom NUI** (Royal RP gold/dark theme) for both players and admins. ox_lib is used only as the client↔server transport — all visuals are custom.
 
 ## Features
 
 - 🪙 **Coin currency** stored in a dedicated DB table, shared **per account** (all of a player's characters share one balance).
-- 🛒 **Shop menu** opened with a **rebindable keybind** (default `F5`) or `/coinshop`. Item labels and images are pulled automatically from ox_inventory.
-- 🔢 **Quantity selection** with live total-cost validation against balance and inventory space.
-- 🛡️ **ACE-gated admin commands** to add/remove/set/check coins.
+- 🛒 **Custom shop UI** opened with a **rebindable keybind** (default `F5`) or `/coinshop` — searchable, category-filtered item grid with quantity selection and live total cost.
+- 🛠️ **Admin tab (in the same UI)** — visible only to ACE-verified admins:
+  - **Manage Items:** add / edit / remove catalog items at runtime (DB-driven), pick the item from an ox_inventory autocomplete, set price, label/category/description/image overrides, enable/disable, and sort order.
+  - **Manage Coins:** search online players, see balances, and add / remove / set coins — or target any server id / identifier manually.
+- 🔢 **Server-enforced validation** — purchases check the catalog, balance, and inventory space; all admin actions re-check ACE server-side.
+- 🛡️ **Admin coin commands** as well as the UI: `/addcoins /removecoins /setcoins /checkcoins`.
 - 📝 **Logging** to server console, a Discord webhook, and a `coin_shop_transactions` audit table.
+
+> The catalog lives in the `coin_shop_items` table and starts **empty** — build it from the Admin → Manage Items tab. Labels and images default to ox_inventory unless you override them.
 
 ## Dependencies
 
@@ -34,15 +39,20 @@ An ESX Legacy in-game shop where players buy **ox_inventory** items using **coin
    add_principal identifier.fivem:1234567 group.admin
    ```
    (Or assign the principal that txAdmin / your admin group already uses.)
-5. Configure items, prices, the keybind, and logging in `config.lua`.
+5. Configure the keybind, currency name, branding, and logging in `config.lua`. The item catalog is managed in-game (no config editing needed).
 
 ## Usage
 
 ### Players
 - Press **F5** (rebind under *Settings → Key Bindings → FiveM → "Open Coin Shop"*) or type `/coinshop`.
-- Pick an item, enter a quantity, confirm. Coins are deducted and the item is added to your inventory.
+- Browse/search items, click **Buy**, choose a quantity, confirm. Coins are deducted and the item is added to your inventory.
 
-### Admins
+### Admins (UI)
+- Open the shop and click the **Admin** tab (only shown if you have the ACE permission).
+- **Manage Items** — add new items (type/select an ox_inventory item, set price + optional overrides), edit or delete existing ones, toggle visibility, reorder.
+- **Manage Coins** — search online players and add/remove/set their balance, or type any server id / identifier into the Target field.
+
+### Admins (commands)
 | Command | Description |
 |---|---|
 | `/addcoins [id\|identifier] [amount]` | Add coins to a player. |
