@@ -47,8 +47,9 @@ html, body {
 .backdrop {
     position: absolute;
     inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(2px);
+    /* NOTE: avoid backdrop-filter: blur() here — FiveM's CEF renders it as a
+       solid black fill, hiding the game world entirely. */
+    background: radial-gradient(circle at center, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.6));
 }
 
 /* ============ PANEL ============ */
