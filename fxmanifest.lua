@@ -3,7 +3,7 @@ game 'gta5'
 
 name 'rc_coin_shop'
 description 'ESX coin shop - buy ox_inventory items with coins, admin coin management'
-author 'codejunkie'
+author 'sudo-umair'
 version '1.0.0'
 
 lua54 'yes'
