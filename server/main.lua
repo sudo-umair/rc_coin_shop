@@ -202,10 +202,20 @@ end)
 -- Sends the player's balance + catalog so the client can build the menu.
 lib.callback.register('coin_shop:getData', function(source)
     local accountId = getAccountIdFromSource(source)
-    if not accountId then return false end
+    if not accountId then
+        print(('[rc_coin_shop] getData: no ESX player for source %s (is ESX loaded / player spawned?)'):format(source))
+        return false
+    end
+
+    local ok, balance = pcall(loadBalance, accountId)
+    if not ok then
+        print(('[rc_coin_shop] getData: DB error for account %s -> %s'):format(accountId, balance))
+        print('[rc_coin_shop] Did you import sql/coin_shop.sql? The coin_shop_balance table is required.')
+        return false
+    end
 
     return {
-        balance = loadBalance(accountId),
+        balance = balance,
         currency = Config.CurrencyName,
         items = Config.Items,
     }
