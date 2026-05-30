@@ -262,8 +262,30 @@
                     <div class="ri-sub">${esc(item.name)} • ${esc(item.category || 'General')}</div>
                 </div>
                 <span class="ri-price">${item.price.toLocaleString()}</span>
-                <button class="btn ghost small">Edit</button>`;
-            row.querySelector('button').onclick = () => openItemForm(item);
+                <div class="row-actions">
+                    <button class="btn ghost small ri-edit">Edit</button>
+                    <button class="btn danger ghost small ri-delete">Delete</button>
+                </div>`;
+            row.querySelector('.ri-edit').onclick = () => openItemForm(item);
+
+            // Two-click confirm so a stray click can't delete an item.
+            const delBtn = row.querySelector('.ri-delete');
+            let armed = false, armTimer = null;
+            delBtn.onclick = () => {
+                if (!armed) {
+                    armed = true;
+                    delBtn.textContent = 'Confirm?';
+                    delBtn.classList.add('armed');
+                    armTimer = setTimeout(() => {
+                        armed = false;
+                        delBtn.textContent = 'Delete';
+                        delBtn.classList.remove('armed');
+                    }, 2500);
+                    return;
+                }
+                clearTimeout(armTimer);
+                removeItem(item.id);
+            };
             list.appendChild(row);
         });
     }
@@ -310,9 +332,9 @@
         }
     }
 
-    async function deleteItem() {
-        if (!admin.editingId) return;
-        const result = await post('admin:deleteItem', { id: admin.editingId });
+    async function removeItem(id) {
+        if (!id) return;
+        const result = await post('admin:deleteItem', { id });
         if (!result) return;
         toast(result.success ? 'success' : 'error', result.message);
         if (result.success) {
@@ -320,6 +342,10 @@
             renderAdminItems();
             $('#itemModal').classList.add('hidden');
         }
+    }
+
+    function deleteItem() {
+        return removeItem(admin.editingId);
     }
 
     // ============================================================
