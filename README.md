@@ -54,7 +54,14 @@ An ESX Legacy in-game shop where players buy **ox_inventory** items using **coin
 - **Manage Items** — add new items (type/select an ox_inventory item, set price + optional overrides), edit or delete existing ones, toggle visibility, reorder.
 - **Manage Coins** — search online players and add/remove/set their balance, or type any server id / identifier into the Target field.
 
+### Players (commands)
+| Command | Description |
+|---|---|
+| `/coinshop` | Open the shop UI. Also bound to a rebindable keybind (default **F5**, set via `Config.OpenKey`) under *Settings → Key Bindings → FiveM → "Open Coin Shop"*. |
+
 ### Admins (commands)
+ACE-gated by `Config.AcePermission` (`coin_shop.admin`). Also runnable from the server console.
+
 | Command | Description |
 |---|---|
 | `/addcoins [id\|identifier] [amount]` | Add coins to a player. |
