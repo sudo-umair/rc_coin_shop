@@ -8,10 +8,11 @@ An ESX Legacy in-game shop where players buy **ox_inventory** items using **coin
 - 🛒 **Custom shop UI** opened with a **rebindable keybind** (default `F5`) or `/coinshop` — searchable, category-filtered item grid with quantity selection and live total cost.
 - 🛠️ **Admin tab (in the same UI)** — visible only to ACE-verified admins:
   - **Manage Items:** add / edit / remove catalog items at runtime (DB-driven), pick the item from an ox_inventory autocomplete, set price, label/category/description/image overrides, enable/disable, and sort order.
-  - **Manage Coins:** search online players, see balances, and add / remove / set coins — or target any server id / identifier manually.
+  - **Manage Coins:** search **all registered players** (online and offline) with their balances and known identifiers (Steam, Discord, FiveM, license…), and add / remove / set coins — or target any server id / identifier manually. Online players show full live identifiers; offline players show whatever was captured the last time they joined.
 - 🔢 **Server-enforced validation** — purchases check the catalog, balance, and inventory space; all admin actions re-check ACE server-side.
 - 🛡️ **Admin coin commands** as well as the UI: `/addcoins /removecoins /setcoins /checkcoins`.
 - 📝 **Logging** to server console, a Discord webhook, and a `coin_shop_transactions` audit table.
+- 🧾 **Identifier capture** — every player's identifiers are recorded on join into `coin_shop_identifiers`, so the admin coin manager can show Steam/Discord/etc. even for offline players.
 
 > The catalog lives in the `coin_shop_items` table and starts **empty** — build it from the Admin → Manage Items tab. Labels and images default to ox_inventory unless you override them.
 
@@ -29,6 +30,7 @@ An ESX Legacy in-game shop where players buy **ox_inventory** items using **coin
    ```sql
    -- sql/coin_shop.sql
    ```
+   (Already running an older version? Re-import the file — it's idempotent and adds the new `coin_shop_identifiers` table.)
 3. Add to `server.cfg`:
    ```cfg
    ensure rc_coin_shop

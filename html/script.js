@@ -311,25 +311,46 @@
     let playerSearchTimer = null;
 
     async function searchPlayers(term) {
-        const players = await post('admin:getPlayers', { search: term || '' });
+        const res = await post('admin:getPlayers', { search: term || '' });
         const list = $('#playerList');
+        const countEl = $('#playerCount');
         list.innerHTML = '';
-        if (!players || !players.length) {
-            list.innerHTML = '<div class="empty">No matching players online.</div>';
+
+        const players = (res && res.players) || [];
+        if (countEl) {
+            countEl.textContent = players.length
+                ? (res.capped ? `(showing ${players.length}+)` : `(${players.length})`)
+                : '';
+        }
+
+        if (!players.length) {
+            list.innerHTML = '<div class="empty">No matching players found.</div>';
             return;
         }
+
         players.forEach((p) => {
             const row = document.createElement('div');
-            row.className = 'row-item selectable' + (admin.selectedTarget === String(p.id) ? ' selected' : '');
+            row.className = 'row-item selectable' + (admin.selectedTarget === String(p.target) ? ' selected' : '');
+
+            const ids = (p.identifiers || [])
+                .map((i) => `<span class="id-chip id-${esc(i.kind)}">${esc(i.kind)}: ${esc(i.value)}</span>`)
+                .join('');
+
+            const meta = [
+                p.online ? `<span class="muted">[${p.id}]</span>` : '',
+                p.characters > 1 ? `<span class="muted">${p.characters} chars</span>` : '',
+            ].filter(Boolean).join(' ');
+
             row.innerHTML = `
+                <span class="dot ${p.online ? 'on' : 'off'}" title="${p.online ? 'Online' : 'Offline'}"></span>
                 <div class="ri-main">
-                    <div class="ri-label">${esc(p.character || p.name)} <span class="muted">[${p.id}]</span></div>
-                    <div class="ri-sub">${esc(p.name)}</div>
+                    <div class="ri-label">${esc(p.name)} ${meta}</div>
+                    <div class="id-chips">${ids || '<span class="muted">no stored identifiers</span>'}</div>
                 </div>
                 <span class="ri-price">${Number(p.balance).toLocaleString()}</span>`;
             row.onclick = () => {
-                admin.selectedTarget = String(p.id);
-                $('#coinTarget').value = String(p.id);
+                admin.selectedTarget = String(p.target);
+                $('#coinTarget').value = String(p.target);
                 $$('#playerList .row-item').forEach((r) => r.classList.remove('selected'));
                 row.classList.add('selected');
             };

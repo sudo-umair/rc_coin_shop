@@ -115,12 +115,13 @@ html, body {
     100% { background-position: 0% 50%; }
 }
 
-/* faint logo watermark */
+/* faint logo watermark — centered behind the panel content */
 .panel.watermark::after {
     content: '';
     position: absolute;
-    right: -60px;
-    bottom: -60px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
     width: 380px;
     height: 380px;
     background: var(--watermark) center / contain no-repeat;
@@ -458,6 +459,41 @@ html, body {
     background: linear-gradient(120deg, rgba(124, 92, 255, 0.14), rgba(0, 224, 255, 0.1));
     box-shadow: 0 0 18px rgba(124, 92, 255, 0.3);
 }
+
+/* online / offline status dot */
+.row-item .dot {
+    width: 9px; height: 9px; flex-shrink: 0; border-radius: 50%;
+    background: var(--text-dim);
+}
+.row-item .dot.on {
+    background: var(--green);
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.8);
+    animation: pulse 2s ease-in-out infinite;
+}
+.row-item .dot.off { background: rgba(248, 113, 113, 0.5); }
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.row-item .ri-label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* identifier chips */
+.id-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.id-chip {
+    font-size: 10.5px; font-weight: 600; line-height: 1.4;
+    padding: 2px 8px; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+    max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* per-identifier accent colors */
+.id-chip.id-discord { color: #c4b5ff; border-color: rgba(124, 92, 255, 0.45); background: rgba(124, 92, 255, 0.12); }
+.id-chip.id-steam { color: #9fd0ff; border-color: rgba(0, 224, 255, 0.4); background: rgba(0, 224, 255, 0.1); }
+.id-chip.id-fivem { color: #ffc6dd; border-color: rgba(255, 77, 140, 0.4); background: rgba(255, 77, 140, 0.1); }
+.id-chip.id-license, .id-chip.id-license2 { color: #ffd9a0; border-color: rgba(255, 176, 32, 0.4); background: rgba(255, 176, 32, 0.1); }
+.id-chip.id-xbl, .id-chip.id-live { color: #9ff5c8; border-color: rgba(56, 249, 168, 0.4); background: rgba(56, 249, 168, 0.1); }
 
 .coins-grid { display: grid; grid-template-columns: 1fr 320px; gap: 18px; flex: 1; min-height: 0; }
 .coins-col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }

@@ -28,6 +28,24 @@ CREATE TABLE IF NOT EXISTS `coin_shop_items` (
   UNIQUE KEY `uniq_name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- Known identifiers per account, captured whenever a player loads in.
+-- Lets the admin coin manager show Steam/Discord/etc. for OFFLINE players,
+-- since the ESX `users` table only stores the primary (license) identifier.
+CREATE TABLE IF NOT EXISTS `coin_shop_identifiers` (
+  `account_id` VARCHAR(64) NOT NULL,        -- license hex shared by all characters
+  `name` VARCHAR(128) DEFAULT NULL,         -- last seen player/character name
+  `steam` VARCHAR(64) DEFAULT NULL,
+  `discord` VARCHAR(64) DEFAULT NULL,
+  `license` VARCHAR(64) DEFAULT NULL,
+  `license2` VARCHAR(64) DEFAULT NULL,
+  `fivem` VARCHAR(64) DEFAULT NULL,
+  `xbl` VARCHAR(64) DEFAULT NULL,
+  `live` VARCHAR(64) DEFAULT NULL,
+  `ip` VARCHAR(64) DEFAULT NULL,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`account_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 -- Audit log of every coin change.
 CREATE TABLE IF NOT EXISTS `coin_shop_transactions` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,

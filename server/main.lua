@@ -28,6 +28,47 @@ local function isAdmin(src)
     return IsPlayerAceAllowed(src, Config.AcePermission)
 end
 
+-- Identifier prefixes we care about for the admin list. `char%d+:` is the
+-- multichar prefix and is stripped before matching.
+local ID_KINDS = { 'steam', 'discord', 'license2', 'license', 'fivem', 'xbl', 'live', 'ip' }
+
+-- Parse a connected player's identifiers into { steam=, discord=, ... }.
+local function gatherIdentifiers(src)
+    local out = {}
+    for _, raw in ipairs(GetPlayerIdentifiers(src) or {}) do
+        local kind, value = raw:match('^(%w+):(.+)$')
+        if kind and value and out[kind] == nil then
+            out[kind] = value
+        end
+    end
+    return out
+end
+
+-- Persist the identifiers of a freshly loaded player so the admin list can
+-- show them even after they disconnect.
+local function rememberIdentifiers(src, accountId, name)
+    if not accountId then return end
+    local ids = gatherIdentifiers(src)
+    MySQL.prepare([[
+        INSERT INTO coin_shop_identifiers
+            (account_id, name, steam, discord, license, license2, fivem, xbl, live, ip)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            name = COALESCE(VALUES(name), name),
+            steam = COALESCE(VALUES(steam), steam),
+            discord = COALESCE(VALUES(discord), discord),
+            license = COALESCE(VALUES(license), license),
+            license2 = COALESCE(VALUES(license2), license2),
+            fivem = COALESCE(VALUES(fivem), fivem),
+            xbl = COALESCE(VALUES(xbl), xbl),
+            live = COALESCE(VALUES(live), live),
+            ip = COALESCE(VALUES(ip), ip)
+    ]], {
+        accountId, name, ids.steam, ids.discord, ids.license, ids.license2,
+        ids.fivem, ids.xbl, ids.live, ids.ip,
+    })
+end
+
 -- ox_inventory item registry (label + image fallbacks)
 local function oxItems()
     return exports.ox_inventory:Items()
@@ -252,7 +293,10 @@ end)
 -- ============================================================
 
 RegisterNetEvent('esx:playerLoaded', function(playerId, xPlayer)
-    loadBalance(getAccountId(xPlayer.identifier))
+    local accountId = getAccountId(xPlayer.identifier)
+    loadBalance(accountId)
+    local name = (xPlayer.getName and xPlayer.getName()) or GetPlayerName(playerId)
+    rememberIdentifiers(playerId, accountId, name)
 end)
 
 AddEventHandler('playerDropped', function()
@@ -430,31 +474,130 @@ lib.callback.register('rc_coin_shop:admin:deleteItem', function(source, id)
     return { success = true, message = 'Item removed.', items = catalogList(false) }
 end)
 
--- Online players (for the coin manager), with balances. Optional name/id filter.
+-- Cap on how many accounts we return for one search, to keep the NUI payload
+-- reasonable on servers with very large user tables.
+local PLAYER_LIST_LIMIT = 200
+
+-- All registered accounts (online and offline) for the coin manager, grouped
+-- per account (multichar aware), each with balance + known identifiers.
+-- Optional filter matches name / server id / identifier.
 lib.callback.register('rc_coin_shop:admin:getPlayers', function(source, search)
     if not isAdmin(source) then return false end
-    search = search and tostring(search):lower() or ''
+    search = search and tostring(search):lower():gsub('^%s+', ''):gsub('%s+$', '') or ''
 
-    local list = {}
+    -- 1) Online players: account -> { src, name, live identifiers }.
+    local online = {}
     for _, playerId in ipairs(GetPlayers()) do
         local sid = tonumber(playerId)
         local xPlayer = ESX.GetPlayerFromId(sid)
         if xPlayer then
-            local name = GetPlayerName(sid) or ('Player %s'):format(sid)
-            if search == '' or tostring(sid) == search or name:lower():find(search, 1, true) then
-                local accountId = getAccountId(xPlayer.identifier)
-                list[#list + 1] = {
+            local accountId = getAccountId(xPlayer.identifier)
+            if accountId and not online[accountId] then
+                online[accountId] = {
                     id = sid,
-                    name = name,
-                    character = xPlayer.getName and xPlayer.getName() or nil,
-                    identifier = xPlayer.identifier,
-                    balance = loadBalance(accountId),
+                    name = (xPlayer.getName and xPlayer.getName()) or GetPlayerName(sid),
+                    identifiers = gatherIdentifiers(sid),
                 }
             end
         end
     end
-    table.sort(list, function(a, b) return a.id < b.id end)
-    return list
+
+    -- 2) Stored identifiers + balances, keyed by account.
+    local idRows = MySQL.query.await('SELECT * FROM coin_shop_identifiers') or {}
+    local storedIds, storedName = {}, {}
+    for _, r in ipairs(idRows) do
+        storedIds[r.account_id] = {
+            steam = r.steam, discord = r.discord, license = r.license,
+            license2 = r.license2, fivem = r.fivem, xbl = r.xbl,
+            live = r.live, ip = r.ip,
+        }
+        storedName[r.account_id] = r.name
+    end
+
+    local balRows = MySQL.query.await('SELECT account_id, coins FROM coin_shop_balance') or {}
+    local balanceOf = {}
+    for _, r in ipairs(balRows) do balanceOf[r.account_id] = r.coins end
+
+    -- 3) Every registered character from the ESX users table, grouped by account.
+    local userRows = MySQL.query.await('SELECT identifier, firstname, lastname FROM users') or {}
+    local accounts, order = {}, {}
+    local function ensure(accountId)
+        if not accounts[accountId] then
+            accounts[accountId] = { account = accountId, characters = 0, name = nil }
+            order[#order + 1] = accountId
+        end
+        return accounts[accountId]
+    end
+
+    for _, r in ipairs(userRows) do
+        local accountId = getAccountId(r.identifier)
+        if accountId then
+            local acc = ensure(accountId)
+            acc.characters = acc.characters + 1
+            if not acc.name then
+                local full = ('%s %s'):format(r.firstname or '', r.lastname or ''):gsub('^%s+', ''):gsub('%s+$', '')
+                if full ~= '' then acc.name = full end
+            end
+        end
+    end
+    -- Accounts that have a balance/identifier row but no users row (edge case).
+    for accountId in pairs(balanceOf) do ensure(accountId) end
+    for accountId in pairs(storedIds) do ensure(accountId) end
+
+    -- 4) Assemble display rows, applying the search filter.
+    local list = {}
+    for _, accountId in ipairs(order) do
+        local acc = accounts[accountId]
+        local on = online[accountId]
+        local ids = (on and next(on.identifiers)) and on.identifiers or storedIds[accountId] or {}
+        local name = (on and on.name) or acc.name or storedName[accountId] or 'Unknown'
+
+        local matched = search == ''
+        if not matched then
+            if name:lower():find(search, 1, true) then matched = true
+            elseif accountId:lower():find(search, 1, true) then matched = true
+            elseif on and tostring(on.id) == search then matched = true
+            else
+                for _, kind in ipairs(ID_KINDS) do
+                    local v = ids[kind]
+                    if v and v:lower():find(search, 1, true) then matched = true break end
+                end
+            end
+        end
+
+        if matched then
+            -- Trim identifiers to the kinds we display, in a stable order.
+            local outIds = {}
+            for _, kind in ipairs(ID_KINDS) do
+                if ids[kind] then outIds[#outIds + 1] = { kind = kind, value = ids[kind] } end
+            end
+            list[#list + 1] = {
+                target = on and tostring(on.id) or accountId, -- coin target: server id if online, else account id
+                account = accountId,
+                id = on and on.id or nil,
+                name = name,
+                online = on ~= nil,
+                characters = acc.characters,
+                balance = balanceOf[accountId] or 0,
+                identifiers = outIds,
+            }
+        end
+    end
+
+    -- Online first, then by name.
+    table.sort(list, function(a, b)
+        if a.online ~= b.online then return a.online end
+        return a.name:lower() < b.name:lower()
+    end)
+
+    local capped = #list > PLAYER_LIST_LIMIT
+    if capped then
+        local trimmed = {}
+        for i = 1, PLAYER_LIST_LIMIT do trimmed[i] = list[i] end
+        list = trimmed
+    end
+
+    return { players = list, capped = capped, total = #list }
 end)
 
 -- ============================================================
