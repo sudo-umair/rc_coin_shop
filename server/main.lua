@@ -44,12 +44,27 @@ local function gatherIdentifiers(src)
     return out
 end
 
+-- Run a query, returning {} instead of throwing if it fails (e.g. the
+-- identifiers table hasn't been imported yet). Keeps the admin list alive.
+local function safeQuery(sql, params)
+    local ok, res = pcall(MySQL.query.await, sql, params)
+    if not ok then
+        print(('[rc_coin_shop] query failed (%s): %s'):format(sql:match('FROM%s+([%w_]+)') or 'query', res))
+        return {}
+    end
+    return res or {}
+end
+
+-- Track whether the identifiers table is usable so we don't repeatedly try
+-- to write to a table that doesn't exist.
+local identifiersTableOk = true
+
 -- Persist the identifiers of a freshly loaded player so the admin list can
 -- show them even after they disconnect.
 local function rememberIdentifiers(src, accountId, name)
-    if not accountId then return end
+    if not accountId or not identifiersTableOk then return end
     local ids = gatherIdentifiers(src)
-    MySQL.prepare([[
+    local ok, err = pcall(MySQL.prepare.await, [[
         INSERT INTO coin_shop_identifiers
             (account_id, name, steam, discord, license, license2, fivem, xbl, live, ip)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -67,6 +82,10 @@ local function rememberIdentifiers(src, accountId, name)
         accountId, name, ids.steam, ids.discord, ids.license, ids.license2,
         ids.fivem, ids.xbl, ids.live, ids.ip,
     })
+    if not ok then
+        identifiersTableOk = false
+        print('[rc_coin_shop] coin_shop_identifiers table missing — import sql/coin_shop.sql to capture offline identifiers. ' .. tostring(err))
+    end
 end
 
 -- ox_inventory item registry (label + image fallbacks)
@@ -502,8 +521,9 @@ lib.callback.register('rc_coin_shop:admin:getPlayers', function(source, search)
         end
     end
 
-    -- 2) Stored identifiers + balances, keyed by account.
-    local idRows = MySQL.query.await('SELECT * FROM coin_shop_identifiers') or {}
+    -- 2) Stored identifiers + balances, keyed by account. safeQuery keeps the
+    --    list working even if the identifiers table hasn't been imported.
+    local idRows = safeQuery('SELECT * FROM coin_shop_identifiers')
     local storedIds, storedName = {}, {}
     for _, r in ipairs(idRows) do
         storedIds[r.account_id] = {
@@ -514,12 +534,12 @@ lib.callback.register('rc_coin_shop:admin:getPlayers', function(source, search)
         storedName[r.account_id] = r.name
     end
 
-    local balRows = MySQL.query.await('SELECT account_id, coins FROM coin_shop_balance') or {}
+    local balRows = safeQuery('SELECT account_id, coins FROM coin_shop_balance')
     local balanceOf = {}
     for _, r in ipairs(balRows) do balanceOf[r.account_id] = r.coins end
 
     -- 3) Every registered character from the ESX users table, grouped by account.
-    local userRows = MySQL.query.await('SELECT identifier, firstname, lastname FROM users') or {}
+    local userRows = safeQuery('SELECT identifier, firstname, lastname FROM users')
     local accounts, order = {}, {}
     local function ensure(accountId)
         if not accounts[accountId] then
@@ -540,7 +560,9 @@ lib.callback.register('rc_coin_shop:admin:getPlayers', function(source, search)
             end
         end
     end
-    -- Accounts that have a balance/identifier row but no users row (edge case).
+    -- Make sure online players always appear, plus any account that has a
+    -- balance/identifier row but no users row (edge case).
+    for accountId in pairs(online) do ensure(accountId) end
     for accountId in pairs(balanceOf) do ensure(accountId) end
     for accountId in pairs(storedIds) do ensure(accountId) end
 
