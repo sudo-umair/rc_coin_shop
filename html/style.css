@@ -278,7 +278,12 @@ html, body {
 .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    /* keep each row at its natural height instead of letting the fixed-height
+       (flex) grid compress rows and clip card content */
+    grid-auto-rows: max-content;
     gap: 14px;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
     /* top padding so the hover lift (translateY) isn't clipped by the scroll edge */
     padding: 6px 6px 2px;
