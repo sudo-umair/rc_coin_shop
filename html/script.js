@@ -218,12 +218,29 @@
         admin.items = data.items || [];
         admin.oxItems = data.oxItems || [];
 
-        const dl = $('#oxItemsList');
-        dl.innerHTML = admin.oxItems
-            .map((i) => `<option value="${esc(i.name)}">${esc(i.label)}</option>`)
+        // Populate the item picker dropdown, sorted by label.
+        const sel = $('#fName');
+        const opts = admin.oxItems
+            .slice()
+            .sort((a, b) => String(a.label).localeCompare(String(b.label)))
+            .map((i) => `<option value="${esc(i.name)}">${esc(i.label)} (${esc(i.name)})</option>`)
             .join('');
+        sel.innerHTML = `<option value="" disabled selected>Select an item…</option>` + opts;
 
         renderAdminItems();
+    }
+
+    // Select an item in the dropdown, adding a fallback option if the item is
+    // no longer registered in ox_inventory (so editing an old entry still shows it).
+    function setItemSelect(name) {
+        const sel = $('#fName');
+        if (name && !Array.from(sel.options).some((o) => o.value === name)) {
+            const o = document.createElement('option');
+            o.value = name;
+            o.textContent = `${name} (missing from ox_inventory)`;
+            sel.appendChild(o);
+        }
+        sel.value = name || '';
     }
 
     function renderAdminItems() {
@@ -254,7 +271,7 @@
     function openItemForm(item) {
         admin.editingId = item ? item.id : null;
         $('#itemModalTitle').textContent = item ? 'Edit Item' : 'Add Item';
-        $('#fName').value = item ? item.name : '';
+        setItemSelect(item ? item.name : '');
         $('#fName').disabled = !!item; // name is the unique key; don't rename in place
         $('#fPrice').value = item ? item.price : 0;
         $('#fLabel').value = item ? (item.rawLabel || '') : '';
