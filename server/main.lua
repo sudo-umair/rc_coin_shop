@@ -175,20 +175,209 @@ end
 --  LOGGING
 -- ============================================================
 
-local function logDiscord(title, description)
-    local d = Config.Logging.discord
-    if not d.enabled or d.webhook == '' then return end
+-- Gated verbose tracing of the webhook pipeline. Enable with
+-- Config.Logging.discord.debug.
+local function dbgDiscord(fmt, ...)
+    if Config.Logging.discord.debug then
+        print(('[rc_coin_shop] [discord] ' .. fmt):format(...))
+    end
+end
 
-    PerformHttpRequest(d.webhook, function() end, 'POST', json.encode({
+-- ---- Discord identity resolution -------------------------------------------
+-- account_id -> discord id (string), or false when none is known. Cached so we
+-- don't hit the identifiers table on every log line.
+local discordCache = {}
+
+local function discordIdForAccount(accountId)
+    if not accountId then return nil end
+    if discordCache[accountId] ~= nil then
+        dbgDiscord('identity: account %s -> %s (cached)', accountId, discordCache[accountId] or 'none')
+        return discordCache[accountId] or nil
+    end
+
+    -- Prefer live identifiers for online players.
+    for _, src in ipairs(sourcesForAccount(accountId)) do
+        local ids = gatherIdentifiers(src)
+        if ids.discord then
+            discordCache[accountId] = ids.discord
+            dbgDiscord('identity: account %s -> %s (live, src %s)', accountId, ids.discord, src)
+            return ids.discord
+        end
+    end
+
+    -- Fall back to the stored identifiers table for offline targets.
+    if identifiersTableOk then
+        local row = safeQuery('SELECT discord FROM coin_shop_identifiers WHERE account_id = ?', { accountId })[1]
+        local d = (row and row.discord) or false
+        discordCache[accountId] = d
+        dbgDiscord('identity: account %s -> %s (stored)', accountId, d or 'none')
+        return d or nil
+    end
+
+    discordCache[accountId] = false
+    dbgDiscord('identity: account %s -> none (identifiers table unavailable)', accountId)
+    return nil
+end
+
+local function discordIdForSource(src)
+    if not src or src == 0 then return nil end
+    return gatherIdentifiers(src).discord
+end
+
+-- ---- Webhook delivery queue ------------------------------------------------
+-- One sequential worker drains the queue so we honour Discord's rate limits
+-- (HTTP 429 -> retry after the advised delay) instead of firing and forgetting.
+local discordQueue = {}
+
+local function enqueueDiscord(label, webhook, payload)
+    discordQueue[#discordQueue + 1] = { label = label, webhook = webhook, payload = json.encode(payload), tries = 0 }
+    dbgDiscord('queued %s embed (%d in queue)', label, #discordQueue)
+end
+
+CreateThread(function()
+    while true do
+        local job = table.remove(discordQueue, 1)
+        if not job then
+            Wait(500)
+        else
+            local result, retryAfter, code
+            dbgDiscord('sending %s embed (try %d)', job.label, job.tries + 1)
+            PerformHttpRequest(job.webhook, function(status, _, headers)
+                code = status
+                if status == 429 then
+                    local ra = headers and (headers['Retry-After'] or headers['retry-after'])
+                    if type(ra) == 'table' then ra = ra[1] end
+                    retryAfter = tonumber(ra) or 1
+                    result = 'retry'
+                elseif status and status >= 200 and status < 300 then
+                    result = 'ok'
+                else
+                    result = 'fail'
+                end
+            end, 'POST', job.payload, { ['Content-Type'] = 'application/json' })
+
+            -- Wait for the async callback (capped so a lost response can't stall the queue).
+            local waited = 0
+            while not result and waited < 10000 do Wait(50); waited = waited + 50 end
+
+            if result == 'ok' then
+                dbgDiscord('%s embed delivered (HTTP %s)', job.label, code)
+            elseif result == 'retry' and job.tries < 5 then
+                job.tries = job.tries + 1
+                dbgDiscord('%s embed rate-limited (HTTP 429), retrying in %.2fs (try %d)', job.label, retryAfter or 1, job.tries)
+                Wait(math.floor((retryAfter or 1) * 1000) + 250)
+                table.insert(discordQueue, 1, job)
+            elseif result == 'fail' and job.tries < 2 then
+                job.tries = job.tries + 1
+                dbgDiscord('%s embed failed (HTTP %s), retrying (try %d)', job.label, code or '?', job.tries)
+                Wait(1000)
+                table.insert(discordQueue, 1, job)
+            elseif result ~= 'ok' then
+                print(('[rc_coin_shop] Discord webhook dropped (%s, HTTP %s) after %d tries.'):format(result or 'timeout', code or '?', job.tries))
+            end
+        end
+    end
+end)
+
+-- ---- Embed builders --------------------------------------------------------
+local function catalogByName(name)
+    for _, row in pairs(items) do
+        if row.name == name then return row end
+    end
+end
+
+local function httpImage(url)
+    if type(url) == 'string' and url:match('^https?://') then return url end
+    return nil -- nui:// paths can't be loaded by Discord
+end
+
+local function nameWithMention(name, discordId)
+    name = tostring(name or 'Unknown')
+    if Config.Logging.discord.mentionPlayer and discordId then
+        return ('%s\n<@%s>'):format(name, discordId)
+    end
+    return name
+end
+
+local function coins(n)
+    return ('%d %s'):format(n or 0, Config.CurrencyName)
+end
+
+local function field(name, value, inline)
+    return { name = name, value = tostring(value), inline = inline ~= false }
+end
+
+local function footer(accountId)
+    return { text = ('rc_coin_shop • account %s • %s'):format(accountId, os.date('%Y-%m-%d %H:%M:%S')) }
+end
+
+local ADMIN_TITLES = {
+    admin_add    = '➕ Coins Added',
+    admin_remove = '➖ Coins Removed',
+    admin_set    = '✏️ Balance Set',
+}
+
+-- Returns (embed, pingDiscordId).
+local function purchaseEmbed(data)
+    local d = Config.Logging.discord
+    local row = catalogByName(data.item)
+    local label = (row and resolveLabel(row)) or data.item or 'item'
+    local image = row and httpImage(resolveImage(row)) or nil
+    local discordId = discordIdForAccount(data.account_id)
+
+    return {
+        title = '🛒 Purchase',
+        color = d.colors.purchase,
+        thumbnail = image and { url = image } or nil,
+        fields = {
+            field('Player', nameWithMention(data.actor, discordId)),
+            field('Item', label),
+            field('Quantity', data.quantity or 1),
+            field('Cost', coins(math.abs(data.amount or 0))),
+            field('New balance', coins(data.balance_after)),
+        },
+        footer = footer(data.account_id),
+    }, discordId
+end
+
+local function adminEmbed(data)
+    local d = Config.Logging.discord
+    local targetDiscord = discordIdForAccount(data.account_id)
+    local amount = data.amount or 0
+    local signed = ('%s%d %s'):format(amount > 0 and '+' or '', amount, Config.CurrencyName)
+
+    return {
+        title = ADMIN_TITLES[data.type] or 'Coin Change',
+        color = d.colors[data.type],
+        fields = {
+            field('Target', nameWithMention(data.target_name or data.account_id, targetDiscord)),
+            field('Admin', nameWithMention(data.actor or 'system', discordIdForSource(data.actor_source))),
+            field('Amount', signed),
+            field('New balance', coins(data.balance_after)),
+        },
+        footer = footer(data.account_id),
+    }, targetDiscord
+end
+
+local function dispatchEmbed(label, webhook, embed, pingId)
+    if not webhook or webhook == '' then
+        dbgDiscord('skipped %s embed: no webhook configured', label)
+        return
+    end
+    local d = Config.Logging.discord
+    local payload = {
         username = d.botName,
         avatar_url = d.avatar ~= '' and d.avatar or nil,
-        embeds = { {
-            title = title,
-            description = description,
-            color = d.color,
-            footer = { text = ('rc_coin_shop • %s'):format(os.date('%Y-%m-%d %H:%M:%S')) },
-        } },
-    }), { ['Content-Type'] = 'application/json' })
+        embeds = { embed },
+    }
+    if d.mentionPlayer and pingId then
+        payload.content = ('<@%s>'):format(pingId)
+        payload.allowed_mentions = { users = { tostring(pingId) } }
+        dbgDiscord('%s embed will mention <@%s>', label, pingId)
+    elseif d.mentionPlayer then
+        dbgDiscord('%s embed: mention enabled but no discord id resolved', label)
+    end
+    enqueueDiscord(label, webhook, payload)
 end
 
 -- type: purchase | admin_add | admin_remove | admin_set
@@ -216,9 +405,15 @@ local function logTransaction(data)
     end
 
     if Config.Logging.discord.enabled then
-        logDiscord(('Coin %s'):format(data.type), data.description or (
-            ('**Account:** %s\n**Amount:** %s\n**New balance:** %s'):format(
-                data.account_id, data.amount, data.balance_after)))
+        local d = Config.Logging.discord
+        dbgDiscord('logTransaction: type=%s account=%s amount=%s', data.type, data.account_id, data.amount)
+        if data.type == 'purchase' then
+            local embed, pingId = purchaseEmbed(data)
+            dispatchEmbed('purchases', d.webhooks.purchases, embed, pingId)
+        else
+            local embed, pingId = adminEmbed(data)
+            dispatchEmbed('admin', d.webhooks.admin, embed, pingId)
+        end
     end
 end
 
@@ -272,6 +467,8 @@ local function ModifyCoins(accountId, delta, meta)
             item = meta.item,
             quantity = meta.quantity,
             actor = meta.actor,
+            actor_source = meta.actor_source,
+            target_name = meta.target_name,
         })
     end
 
@@ -291,6 +488,8 @@ local function SetCoins(accountId, amount, meta)
             amount = amount - current,
             balance_after = amount,
             actor = meta.actor,
+            actor_source = meta.actor_source,
+            target_name = meta.target_name,
         })
     end
     return amount
@@ -643,23 +842,27 @@ local function resolveTarget(arg)
 end
 
 -- mode = 'add' | 'remove' | 'set'. Returns ok(bool), message(string), newBalance(int|nil)
-local function doModify(actorName, target, mode, amount)
+local function doModify(actorName, actorSource, target, mode, amount)
     local accountId, name = resolveTarget(target)
     amount = tonumber(amount)
     if not accountId then return false, 'Target not found.' end
     if not amount or amount < 0 or amount % 1 ~= 0 then return false, 'Amount must be a whole number ≥ 0.' end
     amount = math.floor(amount)
 
+    local meta = { actor = actorName, actor_source = actorSource, target_name = name }
     local newBalance
     if mode == 'add' then
-        newBalance = ModifyCoins(accountId, amount, { type = 'admin_add', actor = actorName })
+        meta.type = 'admin_add'
+        newBalance = ModifyCoins(accountId, amount, meta)
     elseif mode == 'remove' then
-        newBalance = ModifyCoins(accountId, -amount, { type = 'admin_remove', actor = actorName })
+        meta.type = 'admin_remove'
+        newBalance = ModifyCoins(accountId, -amount, meta)
         if not newBalance then -- clamp to zero rather than refusing
-            newBalance = SetCoins(accountId, 0, { type = 'admin_remove', actor = actorName })
+            newBalance = SetCoins(accountId, 0, meta)
         end
     elseif mode == 'set' then
-        newBalance = SetCoins(accountId, amount, { actor = actorName })
+        meta.type = 'admin_set'
+        newBalance = SetCoins(accountId, amount, meta)
     else
         return false, 'Invalid mode.'
     end
@@ -674,7 +877,7 @@ lib.callback.register('rc_coin_shop:admin:modifyCoins', function(source, payload
     if type(payload) ~= 'table' then return { success = false, message = 'Invalid data.' } end
 
     local actorName = source == 0 and 'console' or ('%s (%s)'):format(GetPlayerName(source), source)
-    local ok, message = doModify(actorName, payload.target, payload.mode, payload.amount)
+    local ok, message = doModify(actorName, source, payload.target, payload.mode, payload.amount)
     return { success = ok, message = message }
 end)
 
@@ -690,7 +893,7 @@ local function coinCommand(mode, usage)
     return function(src, args)
         if not isAdmin(src) then return toast(src, 'error', 'No permission.') end
         if not args[1] or not args[2] then return toast(src, 'error', usage) end
-        local ok, message = doModify(adminName(src), args[1], mode, args[2])
+        local ok, message = doModify(adminName(src), src, args[1], mode, args[2])
         toast(src, ok and 'success' or 'error', message)
     end
 end

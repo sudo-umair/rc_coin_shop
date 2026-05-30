@@ -66,9 +66,31 @@ Config.Logging = {
     -- Send a Discord embed on each purchase / admin coin change.
     discord = {
         enabled = false,
-        webhook = '',                 -- paste your webhook URL here
         botName = 'Coin Shop',
-        avatar  = '',                 -- optional avatar image URL
-        color   = 13413120,           -- decimal embed colour (#CCAA00 gold)
+        avatar  = '',                 -- optional bot/author avatar image URL
+
+        -- Verbose console tracing of the webhook pipeline (identity lookups,
+        -- queueing, HTTP status, retries, drops). Leave off in production.
+        debug = false,
+
+        -- Split routing: purchases and admin coin changes go to separate
+        -- channels. Leave a webhook blank ('') to mute that channel.
+        webhooks = {
+            purchases = '',           -- player shop purchases
+            admin     = '',           -- /addcoins /removecoins /setcoins + Admin tab
+        },
+
+        -- Per-event embed colours (decimal).
+        colors = {
+            purchase     = 5793266,   -- blurple
+            admin_add    = 5763719,   -- green
+            admin_remove = 15548997,  -- red
+            admin_set    = 16763904,  -- amber
+        },
+
+        -- Ping the involved player's Discord in the log (buyer on a purchase,
+        -- target on an admin change). Requires their discord identifier, which
+        -- is captured in coin_shop_identifiers. Set false to show name only.
+        mentionPlayer = true,
     },
 }
