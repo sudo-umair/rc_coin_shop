@@ -20,7 +20,7 @@ Config.OpenKey = 'F5'
 --  BRANDING / THEME  (matches mGarage + ac_scoreboard)
 -- ============================================================
 Config.Branding = {
-    serverName = 'Royal RP',     -- shown in the UI header
+    serverName = 'Royal City',   -- shown in the UI header
     logo = 'logo.png',           -- file inside html/ ; used as header mark + bg watermark
     showBackgroundLogo = true,   -- faint watermark behind the panel
     accent = '#CCAA00',          -- primary gold accent

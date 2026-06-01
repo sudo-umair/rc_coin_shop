@@ -1,6 +1,6 @@
 # rc_coin_shop
 
-An ESX Legacy in-game shop where players buy **ox_inventory** items using **coins**, with a fully **custom NUI** (Royal RP gold/dark theme) for both players and admins. ox_lib is used only as the client↔server transport — all visuals are custom.
+An ESX Legacy in-game shop where players buy **ox_inventory** items using **coins**, with a fully **custom NUI** (Royal City gold/dark theme) for both players and admins. ox_lib is used only as the client↔server transport — all visuals are custom.
 
 ## Features
 
