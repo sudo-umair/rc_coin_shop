@@ -1,5 +1,3 @@
-local ESX = exports['es_extended']:getSharedObject()
-
 -- account_id -> coins (in-memory cache for online players)
 local balances = {}
 
@@ -18,9 +16,7 @@ local function getAccountId(identifier)
 end
 
 local function getAccountIdFromSource(src)
-    local xPlayer = ESX.GetPlayerFromId(src)
-    if not xPlayer then return nil end
-    return getAccountId(xPlayer.identifier)
+    return getAccountId(Bridge.GetAccountIdentifier(src))
 end
 
 local function isAdmin(src)
@@ -127,9 +123,9 @@ end
 local function sourcesForAccount(accountId)
     local list = {}
     for _, playerId in ipairs(GetPlayers()) do
-        local xPlayer = ESX.GetPlayerFromId(tonumber(playerId))
-        if xPlayer and getAccountId(xPlayer.identifier) == accountId then
-            list[#list + 1] = tonumber(playerId)
+        local sid = tonumber(playerId)
+        if getAccountIdFromSource(sid) == accountId then
+            list[#list + 1] = sid
         end
     end
     return list
@@ -510,10 +506,11 @@ end)
 --  CACHE LIFECYCLE
 -- ============================================================
 
-RegisterNetEvent('esx:playerLoaded', function(playerId, xPlayer)
-    local accountId = getAccountId(xPlayer.identifier)
+Bridge.OnPlayerLoaded(function(playerId)
+    local accountId = getAccountIdFromSource(playerId)
+    if not accountId then return end
     loadBalance(accountId)
-    local name = (xPlayer.getName and xPlayer.getName()) or GetPlayerName(playerId)
+    local name = Bridge.GetCharacterName(playerId) or GetPlayerName(playerId)
     rememberIdentifiers(playerId, accountId, name)
 end)
 
@@ -522,11 +519,9 @@ AddEventHandler('playerDropped', function()
     local accountId = getAccountIdFromSource(src)
     if not accountId then return end
     for _, playerId in ipairs(GetPlayers()) do
-        if tonumber(playerId) ~= src then
-            local other = ESX.GetPlayerFromId(tonumber(playerId))
-            if other and getAccountId(other.identifier) == accountId then
-                return
-            end
+        local sid = tonumber(playerId)
+        if sid ~= src and getAccountIdFromSource(sid) == accountId then
+            return
         end
     end
     balances[accountId] = nil
@@ -544,7 +539,7 @@ end)
 lib.callback.register('rc_coin_shop:getShop', function(source)
     local accountId = getAccountIdFromSource(source)
     if not accountId then
-        print(('[rc_coin_shop] getShop: no ESX player for source %s'):format(source))
+        print(('[rc_coin_shop] getShop: no framework player for source %s'):format(source))
         return false
     end
 
@@ -567,8 +562,8 @@ lib.callback.register('rc_coin_shop:getShop', function(source)
 end)
 
 lib.callback.register('rc_coin_shop:purchase', function(source, itemName, quantity)
-    local xPlayer = ESX.GetPlayerFromId(source)
-    if not xPlayer then return { success = false, message = 'Player not found.' } end
+    local accountIdentifier = Bridge.GetAccountIdentifier(source)
+    if not accountIdentifier then return { success = false, message = 'Player not found.' } end
 
     -- Find the catalog row by name (enabled only).
     local entry
@@ -590,7 +585,7 @@ lib.callback.register('rc_coin_shop:purchase', function(source, itemName, quanti
         return { success = false, message = ('Maximum %s per purchase.'):format(Config.MaxPurchaseQuantity) }
     end
 
-    local accountId = getAccountId(xPlayer.identifier)
+    local accountId = getAccountId(accountIdentifier)
     local total = entry.price * quantity
     local balance = loadBalance(accountId)
 
@@ -610,7 +605,7 @@ lib.callback.register('rc_coin_shop:purchase', function(source, itemName, quanti
 
     local newBalance = ModifyCoins(accountId, -total, {
         type = 'purchase',
-        character_identifier = xPlayer.identifier,
+        character_identifier = Bridge.GetCharacterIdentifier(source),
         item = itemName,
         quantity = quantity,
         actor = GetPlayerName(source),
@@ -707,16 +702,13 @@ lib.callback.register('rc_coin_shop:admin:getPlayers', function(source, search)
     local online = {}
     for _, playerId in ipairs(GetPlayers()) do
         local sid = tonumber(playerId)
-        local xPlayer = ESX.GetPlayerFromId(sid)
-        if xPlayer then
-            local accountId = getAccountId(xPlayer.identifier)
-            if accountId and not online[accountId] then
-                online[accountId] = {
-                    id = sid,
-                    name = (xPlayer.getName and xPlayer.getName()) or GetPlayerName(sid),
-                    identifiers = gatherIdentifiers(sid),
-                }
-            end
+        local accountId = getAccountIdFromSource(sid)
+        if accountId and not online[accountId] then
+            online[accountId] = {
+                id = sid,
+                name = Bridge.GetCharacterName(sid) or GetPlayerName(sid),
+                identifiers = gatherIdentifiers(sid),
+            }
         end
     end
 
@@ -737,8 +729,8 @@ lib.callback.register('rc_coin_shop:admin:getPlayers', function(source, search)
     local balanceOf = {}
     for _, r in ipairs(balRows) do balanceOf[r.account_id] = r.coins end
 
-    -- 3) Every registered character from the ESX users table, grouped by account.
-    local userRows = safeQuery('SELECT identifier, firstname, lastname FROM users')
+    -- 3) Every registered character from the framework's own table, grouped by account.
+    local userRows = Bridge.GetAllCharacters()
     local accounts, order = {}, {}
     local function ensure(accountId)
         if not accounts[accountId] then
@@ -829,9 +821,9 @@ end)
 local function resolveTarget(arg)
     local asId = tonumber(arg)
     if asId then
-        local xTarget = ESX.GetPlayerFromId(asId)
-        if xTarget then
-            return getAccountId(xTarget.identifier), GetPlayerName(asId)
+        local accountId = getAccountIdFromSource(asId)
+        if accountId then
+            return accountId, GetPlayerName(asId)
         end
         return nil, nil
     end

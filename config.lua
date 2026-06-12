@@ -4,6 +4,9 @@ Config = {}
 --  GENERAL
 -- ============================================================
 
+-- 'auto' | 'esx' | 'qb' — which framework to bind to ('auto' detects whichever is running)
+Config.Framework = 'auto'
+
 -- Name shown next to amounts in the UI (e.g. "150 Coins")
 Config.CurrencyName = 'Coins'
 

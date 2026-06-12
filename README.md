@@ -1,6 +1,6 @@
 # rc_coin_shop
 
-An ESX Legacy in-game shop where players buy **ox_inventory** items using **coins**, with a fully **custom NUI** (Royal City gold/dark theme) for both players and admins. ox_lib is used only as the client↔server transport — all visuals are custom.
+An in-game shop for **ESX Legacy & QBCore** where players buy **ox_inventory** items using **coins**, with a fully **custom NUI** (Royal City gold/dark theme) for both players and admins. ox_lib is used only as the client↔server transport — all visuals are custom.
 
 ## Features
 
@@ -18,7 +18,7 @@ An ESX Legacy in-game shop where players buy **ox_inventory** items using **coin
 
 ## Dependencies
 
-- `es_extended` (ESX Legacy)
+- `es_extended` (ESX Legacy) **or** `qb-core` — auto-detected; set `Config.Framework` to force one
 - `ox_lib`
 - `ox_inventory`
 - `oxmysql`
@@ -80,4 +80,4 @@ exports.rc_coin_shop:RemoveCoins(accountId, amount, actor)
 exports.rc_coin_shop:SetCoins(accountId, amount, actor)
 ```
 
-`accountId` is the license hex (the part after `charN:`). Strip the prefix from an ESX identifier with `identifier:gsub('^char%d+:', '')`.
+`accountId` is the account-wide identifier: on ESX the license hex (the part after `charN:` — strip the prefix with `identifier:gsub('^char%d+:', '')`), on QBCore the player's `license:` identifier. Both are shared across all of a player's characters, so the balance follows the account.

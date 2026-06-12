@@ -2,7 +2,7 @@ fx_version 'cerulean'
 game 'gta5'
 
 name 'rc_coin_shop'
-description 'ESX coin shop - buy ox_inventory items with coins, admin coin management'
+description 'Coin shop for ESX & QBCore - buy ox_inventory items with coins, admin coin management'
 author 'sudo-umair'
 version '1.0.0'
 
@@ -19,6 +19,7 @@ client_scripts {
 
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
+    'bridge/server.lua',
     'server/main.lua'
 }
 
@@ -32,7 +33,6 @@ files {
 }
 
 dependencies {
-    'es_extended',
     'ox_lib',
     'ox_inventory',
     'oxmysql'
